@@ -1,12 +1,10 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:tflite_flutter/tflite_flutter.dart';
-import 'package:image/image.dart' as img;
 import 'package:geolocator/geolocator.dart';
-import 'package:share_plus/share_plus.dart';
+import 'services/model_service.dart';
+import 'services/camera_service.dart';
+import 'services/location_service.dart';
+import 'services/share_service.dart';
 
 void main() {
   runApp(const MyApp());
@@ -14,6 +12,7 @@ void main() {
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
+  
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -29,113 +28,93 @@ class MyApp extends StatelessWidget {
 
 class ImageClassificationPage extends StatefulWidget {
   const ImageClassificationPage({super.key});
+  
   @override
   State<ImageClassificationPage> createState() => _ImageClassificationPageState();
 }
 
 class _ImageClassificationPageState extends State<ImageClassificationPage> {
-  late Interpreter _interpreter;
-  late List<String> _labels;
   File? _image;
   List<Map<String, dynamic>> _results = [];
   Position? _currentPosition;
   String _locationAddress = 'Getting location...';
   final TextEditingController _additionalDetailsController = TextEditingController();
   bool _isLoadingLocation = false;
+  bool _isProcessingImage = false;
+
+  // Service instances
+  final ModelService _modelService = ModelService.instance;
+  final CameraService _cameraService = CameraService.instance;
+  final LocationService _locationService = LocationService.instance;
+  final ShareService _shareService = ShareService.instance;
 
   @override
   void initState() {
     super.initState();
-    loadModelAndLabels();
+    _initializeServices();
     _getCurrentLocation();
   }
 
-  Future<void> loadModelAndLabels() async {
-    _interpreter = await Interpreter.fromAsset('assets/2.tflite');
-    _labels = await loadLabels('assets/labels.txt');
-    setState(() {});
-  }
-
-  Future<List<String>> loadLabels(String path) async {
-    final rawString = await rootBundle.loadString(path);
-    return rawString.trim().split('\n').where((line) => line.isNotEmpty).toList();
-  }
-
-  bool _isModelLoaded() {
+  Future<void> _initializeServices() async {
     try {
-      return _labels.isNotEmpty;
+      await _modelService.loadModelAndLabels();
+      setState(() {});
     } catch (e) {
-      return false;
+      _showErrorSnackBar('Failed to load AI model: $e');
     }
   }
 
   Future<void> pickAndClassifyImage() async {
-    // Check if model and labels are loaded
-    if (!_isModelLoaded()) return;
-    
-    final picker = ImagePicker();
-    final pickedFile = await picker.pickImage(source: ImageSource.camera);
-    if (pickedFile == null) return;
+    if (!_modelService.isModelLoaded) {
+      _showErrorSnackBar('AI model not loaded yet');
+      return;
+    }
 
-    await _classifyImage(File(pickedFile.path));
+    try {
+      final image = await _cameraService.pickImageFromCamera();
+      if (image != null) {
+        await _classifyImage(image);
+      }
+    } catch (e) {
+      _showErrorSnackBar('Failed to capture image: $e');
+    }
   }
 
   Future<void> pickFromGalleryAndClassify() async {
-    // Check if model and labels are loaded
-    if (!_isModelLoaded()) return;
-    
-    final picker = ImagePicker();
-    final pickedFile = await picker.pickImage(source: ImageSource.gallery);
-    if (pickedFile == null) return;
+    if (!_modelService.isModelLoaded) {
+      _showErrorSnackBar('AI model not loaded yet');
+      return;
+    }
 
-    await _classifyImage(File(pickedFile.path));
+    try {
+      final image = await _cameraService.pickImageFromGallery();
+      if (image != null) {
+        await _classifyImage(image);
+      }
+    } catch (e) {
+      _showErrorSnackBar('Failed to select image: $e');
+    }
   }
 
   Future<void> _classifyImage(File image) async {
     setState(() {
       _image = image;
       _results = [];
+      _isProcessingImage = true;
     });
 
-    // Read and preprocess
-    final rawBytes = await image.readAsBytes();
-    img.Image? oriImage = img.decodeImage(rawBytes);
-    img.Image resizedImage = img.copyResize(oriImage!, width: 224, height: 224);
-
-    // Convert image to input tensor
-    // EfficientNet Lite0 (int8) usually expects shape: [1, 224, 224, 3] with uint8 data
-    var input = List.generate(
-        1,
-        (_) => List.generate(
-            224,
-            (y) => List.generate(
-                224,
-                (x) {
-                  final pixel = resizedImage.getPixel(x, y);
-                  return [
-                    pixel.r,
-                    pixel.g,
-                    pixel.b
-                  ];
-                })));
-
-    // Output: shape [1, labels.length]
-    var output = List.filled(1 * _labels.length, 0).reshape([1, _labels.length]);
-
-    // Run inference
-    _interpreter.run(input, output);
-
-    // Process output
-    var scores = output[0];
-    List<Map<String, dynamic>> results = [];
-    for (int i = 0; i < _labels.length; i++) {
-      results.add({'label': _labels[i], 'confidence': scores[i]});
+    try {
+      final results = await _modelService.classifyImage(image);
+      setState(() {
+        _results = results;
+        _isProcessingImage = false;
+      });
+    } catch (e) {
+      setState(() {
+        _isProcessingImage = false;
+      });
+      _showErrorSnackBar('Failed to classify image: $e');
     }
-    results.sort((a, b) => (b['confidence'] as num).compareTo(a['confidence'] as num));
-
-    setState(() {
-      _results = results.take(5).toList();
-    });
   }
 
   Future<void> _getCurrentLocation() async {
@@ -144,44 +123,14 @@ class _ImageClassificationPageState extends State<ImageClassificationPage> {
     });
 
     try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
+      final position = await _locationService.getCurrentLocation();
+      if (position != null) {
         setState(() {
-          _locationAddress = 'Location services are disabled';
+          _currentPosition = position;
+          _locationAddress = _locationService.formatPosition(position);
           _isLoadingLocation = false;
         });
-        return;
       }
-
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          setState(() {
-            _locationAddress = 'Location permission denied';
-            _isLoadingLocation = false;
-          });
-          return;
-        }
-      }
-
-      if (permission == LocationPermission.deniedForever) {
-        setState(() {
-          _locationAddress = 'Location permission permanently denied';
-          _isLoadingLocation = false;
-        });
-        return;
-      }
-
-      Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
-
-      setState(() {
-        _currentPosition = position;
-        _locationAddress = '${position.latitude.toStringAsFixed(6)}, ${position.longitude.toStringAsFixed(6)}';
-        _isLoadingLocation = false;
-      });
     } catch (e) {
       setState(() {
         _locationAddress = 'Error getting location: $e';
@@ -192,40 +141,34 @@ class _ImageClassificationPageState extends State<ImageClassificationPage> {
 
   Future<void> _shareReport() async {
     if (_results.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please take a photo first')),
-      );
+      _showErrorSnackBar('Please take a photo first');
       return;
     }
 
-    String detectedIssues = _results.map((r) => 
-      '${r['label']}: ${(r['confidence']).toStringAsFixed(1)}%'
-    ).join('\n');
-
-    String shareText = '''
-InfraOwl Issue Report
-
-Detected Issues:
-$detectedIssues
-
-Location: $_locationAddress
-
-Additional Details:
-${_additionalDetailsController.text.isEmpty ? 'None' : _additionalDetailsController.text}
-
-Generated with InfraOwl App
-''';
-
-    if (_image != null) {
-      await Share.shareXFiles([XFile(_image!.path)], text: shareText);
-    } else {
-      await Share.share(shareText);
+    try {
+      await _shareService.shareReport(
+        detectedIssues: _results,
+        location: _locationAddress,
+        additionalDetails: _additionalDetailsController.text,
+        imageFile: _image,
+      );
+    } catch (e) {
+      _showErrorSnackBar('Failed to share report: $e');
     }
+  }
+
+  void _showErrorSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red,
+      ),
+    );
   }
 
   @override
   void dispose() {
-    _interpreter.close();
+    _modelService.dispose();
     _additionalDetailsController.dispose();
     super.dispose();
   }
@@ -304,8 +247,14 @@ Generated with InfraOwl App
                 children: [
                   Expanded(
                     child: ElevatedButton.icon(
-                      onPressed: pickAndClassifyImage,
-                      icon: const Icon(Icons.camera_alt),
+                      onPressed: _isProcessingImage ? null : pickAndClassifyImage,
+                      icon: _isProcessingImage 
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.camera_alt),
                       label: const Text('Camera'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.blue,
@@ -317,7 +266,7 @@ Generated with InfraOwl App
                   const SizedBox(width: 12),
                   Expanded(
                     child: ElevatedButton.icon(
-                      onPressed: pickFromGalleryAndClassify,
+                      onPressed: _isProcessingImage ? null : pickFromGalleryAndClassify,
                       icon: const Icon(Icons.photo_library),
                       label: const Text('Gallery'),
                       style: ElevatedButton.styleFrom(
