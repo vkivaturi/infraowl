@@ -1,4 +1,5 @@
 import 'package:geolocator/geolocator.dart';
+import 'package:geocoding/geocoding.dart';
 
 class LocationService {
   static LocationService? _instance;
@@ -51,6 +52,41 @@ class LocationService {
 
   Future<LocationPermission> requestPermission() async {
     return await Geolocator.requestPermission();
+  }
+
+  Future<String?> getAddressFromCoordinates(double latitude, double longitude) async {
+    try {
+      List<Placemark> placemarks = await placemarkFromCoordinates(latitude, longitude);
+      if (placemarks.isNotEmpty) {
+        Placemark place = placemarks[0];
+        return _formatAddress(place);
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  String _formatAddress(Placemark place) {
+    List<String> addressComponents = [];
+    
+    if (place.street?.isNotEmpty == true) {
+      addressComponents.add(place.street!);
+    }
+    if (place.subLocality?.isNotEmpty == true) {
+      addressComponents.add(place.subLocality!);
+    }
+    if (place.locality?.isNotEmpty == true) {
+      addressComponents.add(place.locality!);
+    }
+    if (place.administrativeArea?.isNotEmpty == true) {
+      addressComponents.add(place.administrativeArea!);
+    }
+    if (place.postalCode?.isNotEmpty == true) {
+      addressComponents.add(place.postalCode!);
+    }
+    
+    return addressComponents.join(', ');
   }
 
   Future<double> distanceBetween(

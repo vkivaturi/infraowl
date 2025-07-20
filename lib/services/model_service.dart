@@ -71,7 +71,7 @@ class ModelService {
     var scores = output[0];
     List<Map<String, dynamic>> results = [];
     for (int i = 0; i < _labels.length; i++) {
-      results.add({'label': _labels[i], 'confidence': scores[i]});
+      results.add({'label': _labels[i], 'confidence': (scores[i] as num).toDouble()});
     }
     results.sort((a, b) => (b['confidence'] as num).compareTo(a['confidence'] as num));
 
