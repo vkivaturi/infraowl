@@ -1,0 +1,5 @@
+pothole
+crack
+broken_pipe
+damaged_road
+normal
