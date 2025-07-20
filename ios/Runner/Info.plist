@@ -47,5 +47,9 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>This app needs access to camera to take photos for image classification.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>This app needs access to location to track where issues are reported.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>This app needs access to location to track where issues are reported.</string>
 </dict>
 </plist>
