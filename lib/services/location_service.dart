@@ -70,23 +70,58 @@ class LocationService {
   String _formatAddress(Placemark place) {
     List<String> addressComponents = [];
     
-    if (place.street?.isNotEmpty == true) {
+    // Street-level details
+    if (place.subThoroughfare?.isNotEmpty == true && place.thoroughfare?.isNotEmpty == true) {
+      // House/building number + street name
+      addressComponents.add('${place.subThoroughfare} ${place.thoroughfare}');
+    } else if (place.thoroughfare?.isNotEmpty == true) {
+      // Just street name if no house number
+      addressComponents.add(place.thoroughfare!);
+    } else if (place.street?.isNotEmpty == true) {
+      // Fallback to general street info
       addressComponents.add(place.street!);
     }
+    
+    // Neighborhood/area details
     if (place.subLocality?.isNotEmpty == true) {
       addressComponents.add(place.subLocality!);
     }
+    
+    // City/town
     if (place.locality?.isNotEmpty == true) {
       addressComponents.add(place.locality!);
     }
+    
+    // State/province and postal code on same line
+    List<String> statePostal = [];
     if (place.administrativeArea?.isNotEmpty == true) {
-      addressComponents.add(place.administrativeArea!);
+      statePostal.add(place.administrativeArea!);
     }
     if (place.postalCode?.isNotEmpty == true) {
-      addressComponents.add(place.postalCode!);
+      statePostal.add(place.postalCode!);
+    }
+    if (statePostal.isNotEmpty) {
+      addressComponents.add(statePostal.join(' '));
     }
     
     return addressComponents.join(', ');
+  }
+
+  // Get detailed location information for debugging/development
+  Map<String, String?> getDetailedLocationInfo(Placemark place) {
+    return {
+      'Name': place.name,
+      'Street Number': place.subThoroughfare,
+      'Street Name': place.thoroughfare,
+      'Street (General)': place.street,
+      'Neighborhood': place.subLocality,
+      'City': place.locality,
+      'Sub-Admin Area': place.subAdministrativeArea,
+      'State/Province': place.administrativeArea,
+      'Postal Code': place.postalCode,
+      'Country': place.country,
+      'ISO Country Code': place.isoCountryCode,
+    };
   }
 
   Future<double> distanceBetween(
